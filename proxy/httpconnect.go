@@ -3,7 +3,6 @@ package proxy
 
 import (
 	"errors"
-	"log"
 	"net/http"
 	"net/url"
 
@@ -12,12 +11,7 @@ import (
 )
 
 // HTTPCONNECT returns a Dialer that makes HTTP CONNECT connections to the given address
-func HTTPCONNECT(network string, address string, forward proxy.Dialer) (proxy.Dialer, error) {
-	url, err := url.Parse(address)
-	if err != nil {
-		log.Fatalf("unable to parse address: %v", err)
-	}
-
+func HTTPCONNECT(url *url.URL, forward proxy.Dialer) (proxy.Dialer, error) {
 	transport := http.DefaultTransport.(*http.Transport)
 	if forward != nil {
 		transport.Dial = forward.Dial
@@ -26,6 +20,6 @@ func HTTPCONNECT(network string, address string, forward proxy.Dialer) (proxy.Di
 	if url.Scheme != "http" && url.Scheme != "https" {
 		return nil, errors.New("Unsupported scheme: " + url.Scheme)
 	}
-	d := httpconnect.NewDialer(network, url, transport)
+	d := httpconnect.NewDialer("tcp", url, transport)
 	return d, nil
 }
