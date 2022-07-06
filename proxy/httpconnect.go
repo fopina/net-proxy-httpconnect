@@ -1,3 +1,4 @@
+// ALL CREDITS TO https://go-review.googlesource.com/c/net/+/111135/
 package proxy
 
 import (

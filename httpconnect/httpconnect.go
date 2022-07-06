@@ -4,6 +4,8 @@
 
 // Package httpconnect provides an implementation of a Dialer that connects
 // to the destination address via a HTTP(S) proxy.
+
+// ALL CREDITS TO https://go-review.googlesource.com/c/net/+/134675
 package httpconnect
 
 import (
