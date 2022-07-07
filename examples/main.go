@@ -5,16 +5,25 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net/url"
 	"os"
+	"syscall"
 
 	httpproxy "github.com/fopina/net-proxy-httpconnect/proxy"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/net/proxy"
+	"golang.org/x/term"
 )
 
 const TEST_TARGET = "github.com:22"
 
+func init() {
+	httpproxy.RegisterSchemes()
+}
+
 func main() {
 	proxyPtr := flag.String("proxy", "", "proxy URL")
+	envPtr := flag.Bool("env", false, "use settings configuration from environment")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] PATH_TO_GITHUB_PRIVATE_KEY\n", os.Args[0])
@@ -29,13 +38,9 @@ func main() {
 		os.Exit(2)
 	}
 
-	body, err := ioutil.ReadFile(flag.Arg(0))
+	signer, err := parsePrivateKeyFile(flag.Arg(0))
 	if err != nil {
-		log.Fatalf("unable to read file: %v", err)
-	}
-	signer, err := ssh.ParsePrivateKey(body)
-	if err != nil {
-		log.Fatalf("unable to parse key: %v", err)
+		log.Fatal("unable to parse key", err)
 	}
 
 	config := &ssh.ClientConfig{
@@ -46,28 +51,32 @@ func main() {
 		},
 	}
 
-	var client *ssh.Client
+	var dialer proxy.Dialer
 
 	if *proxyPtr != "" {
-		dialer, err := httpproxy.HTTPCONNECT("tcp", *proxyPtr, nil)
+		proxyURL, err := url.Parse(*proxyPtr)
+		if err != nil {
+			log.Fatal("invalid proxy URL", err)
+		}
+		dialer, err = httpproxy.HTTPCONNECT(proxyURL, nil)
 		if err != nil {
 			log.Fatalf("failed to dial http proxy: %v", err)
 		}
-		pconn, err := dialer.Dial("tcp", TEST_TARGET)
-		if err != nil {
-			log.Fatalf("failed to connect to target over proxy: %v", err)
-		}
-		conn, chans, reqs, err := ssh.NewClientConn(pconn, TEST_TARGET, config)
-		if err != nil {
-			log.Fatalf("failed to create SSH client: %v", err)
-		}
-		client = ssh.NewClient(conn, chans, reqs)
+	} else if *envPtr {
+		dialer = proxy.FromEnvironment()
 	} else {
-		client, err = ssh.Dial("tcp", TEST_TARGET, config)
-		if err != nil {
-			log.Fatal(err)
-		}
+		dialer = proxy.Direct
 	}
+
+	pconn, err := dialer.Dial("tcp", TEST_TARGET)
+	if err != nil {
+		log.Fatalf("failed to connect to target over proxy: %v", err)
+	}
+	conn, chans, reqs, err := ssh.NewClientConn(pconn, TEST_TARGET, config)
+	if err != nil {
+		log.Fatalf("failed to create SSH client: %v", err)
+	}
+	client := ssh.NewClient(conn, chans, reqs)
 	defer client.Close()
 
 	session, err := client.NewSession()
@@ -82,4 +91,29 @@ func main() {
 	} else {
 		log.Fatalf("This was NOT EXPECTED from git@github:com!\nOutput:\n%v", string(combo))
 	}
+}
+
+func parsePrivateKeyFile(filePath string) (ssh.Signer, error) {
+	body, err := ioutil.ReadFile(flag.Arg(0))
+	if err != nil {
+		return nil, err
+	}
+	signer, err := ssh.ParsePrivateKey(body)
+	if err != nil {
+		_, ok := err.(*ssh.PassphraseMissingError)
+		if ok {
+			fmt.Print("Enter Password: ")
+			bytePassword, err := term.ReadPassword(int(syscall.Stdin))
+			if err != nil {
+				return nil, err
+			}
+			signer, err = ssh.ParsePrivateKeyWithPassphrase(body, bytePassword)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
+	}
+	return signer, nil
 }
